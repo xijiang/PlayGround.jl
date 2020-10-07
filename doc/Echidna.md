@@ -22,5 +22,3 @@ cd Jobs/Examples
 Echidna.sh lamb.as		# many examples there
 # Succeeded on my machine
 ```
-
-## Data analyses
