@@ -1,4 +1,4 @@
-using Random, DataFrames, Distributions, Roots
+using Random, Distributions, Roots
 
 """
     simu_u_ped(nid, ng)
@@ -23,7 +23,6 @@ Unknown parent = 0.
 
 """
 function simu_u_ped(nid::Int, ng::Int)
-    # subtitle("Simulate a pedigree of nid x ng = ($nid x $ng)")
     nid < 1 && @error "nid (= $nid) should > 0"
     ng  < 1 && @error "ng (= $ng) should > 0"
     nid % 2 == 1 && begin
@@ -42,7 +41,6 @@ function simu_u_ped(nid::Int, ng::Int)
             append!(ped, [id[i], id[i+1], id[i], id[i+1]])
         end
     end
-    #done()
     reshape(ped, 2, :)'
 end
 
@@ -56,7 +54,6 @@ Given a pedigree `ped`, heritability `h2`, this function return two vectors, bre
 The population mean μ is 0.0, variance of phenotypes is 1.0 by default.
 """
 function simu_p_bvy(ped, h2; μ = .0, Vp = 1.0)
-    # subtitle("Simulate breeding and phenotype values with h2 = $h2, vp = $vp")
     ! (0.0 ≤ h2 ≤ 1.0) && throw(DomainError("h2 should be in [0, 1]"))
     Vp ≤ .0 && throw(DomainError("vp should be in (0, ∞)"))
 
@@ -74,7 +71,6 @@ function simu_p_bvy(ped, h2; μ = .0, Vp = 1.0)
         bv[i] += ma > 0 ? bv[ma] / 2. + rand(Mendel) : rand(RndAdd)
     end
     y = y + bv .+ μ
-    # done()
     return bv, y 
 end
 
@@ -148,6 +144,8 @@ function simu_q_bvy(ped, sde, allele, eQTL)
     for id in nFdr+1:nID        # check pedigree
         if ped[id, 1] == 0 || ped[id, 2] == 0
             throw(DomainError("ID $id's parent(s) unknown"))
+        elseif ped[id, 1] >= id || ped[id, 2] >= id
+            throw(DomainError("ID $id's parents not before this ID"))
         end
     end
     
