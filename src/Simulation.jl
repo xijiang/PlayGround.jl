@@ -1,4 +1,4 @@
-using Random, DataFrames, Distributions
+using Random, DataFrames, Distributions, Roots
 
 """
     simu_u_ped(nid, ng)
@@ -80,98 +80,98 @@ end
 
 
 """
-    simu_q_bvy(ped, h2; nqtl = 1000, keep = false, shape = 0.25, vp = 1.0, MAF = 0.01)
+    simu_q_founder(nID, h2; μ = .0, Vp = 1.0, nQTL = 1000, shape = 0.25, MAF = 0.01)
 ---
-Simulate breeding values (`bv`) and phenotypes (`y`) with the QTL way.
-This also a dirty simulation, which means there are some unrealistic hypotheses.
-This simulation is however more realistic than `simu_p_bvy`.
+Simulate a founder population of size = `nid`.  This population will have
+- Va = h2
+= Vp = 1.0
 
-1. Sample the biallelic QTL allele frequencies from `Beta(0.25)` in `[MAF, 1-MAF]`.
-2. Sample QTL alleles from Uniform[0, 1] distribution on above frequencies.
-3. Sample and adjust QTL effects.
-4. Drop QTL alleles into the pedigree.
-5. Calculate breeding values and add noises to create phenotypes.
-
-By default,
-1. This program uses 1000 QTL
-2. QTL allele frequencies follow Beta distribution with a default shape (0.25, 0.25).
-3. MAF = 0.01
-4. tol = 1e-3, to adjust mean and variance
-
-All above 3 can be modified.  This subroutine trys to simulate a population of Vp = 1.0.
+unless specified otherwize.  This also assume the QTL
+- are independent 
+- frequencies follow a β(0.25) distribution
 """
-function simu_q_bvy(ped, h2; nQTL = 1000, Shape = 0.25, MAF = 0.01, vp = 1.0, tol=1e-3)
+function simu_q_founder(nID, h2; μ = .0, Vp = 1.0, nQTL = 1000, Shape = 0.25, MAF = 0.01)
     # sample frequencies for QTL
-    freq = Float64[]            # pop frequency of (MAF, 1-MAF), exclusive
+    freq = Float64[]            # pop frequency of (MAF, 1-MAF), inclusive
     while length(freq) < nQTL   # sizeof is equivalent to capacity of C++
         f = rand(Beta(Shape))
-        MAF < f < 1-MAF && push!(freq, f)
+        MAF ≤ f ≤ 1-MAF && push!(freq, f)
     end
 
-    nID  = size(ped)[1]
-    dfrq = Bernoulli.(freq)     # for an unknown parent, sample alleles from population
-    allele = zeros(Bool, (2nID, nQTL)) # Only one byte each allele, saving memory
-    
-    for i in 1:2:2nID           # Simulate the alleles
-        id = Int((i+1)/2)
-        pa, ma = ped[id, :]
-        if pa == 0
-            allele[i, :] = rand.(dfrq)
-        else
-            ix = CartesianIndex.(rand(2pa-1:2pa, nQTL), 1:nQTL)
-            allele[i, :] = allele[ix]
+    allele = begin
+        tmp = Bool[]
+        for f in freq
+            append!(tmp, rand(Bernoulli(f), 2nID))
         end
-        if ma == 0
-            allele[i+1, :] = rand.(dfrq)
-        else
-            ix = CartesianIndex.(rand(2ma-1:2ma, nQTL), 1:nQTL)
-            allele[i+1, :] = allele[ix]
-        end
+        reshape(tmp, 2nID, :)
     end
 
-    gt = begin                  # convert to 012 genotypes of Float64
+    eQTL = randn(nQTL)
+    M = begin
         tmp = Float64[]
         for i in 1:2:2nID
             append!(tmp, convert.(Float64, allele[i, :] + allele[i+1, :]))
         end
-        reshape(tmp, nID, :)
+        reshape(tmp, nQTL, :)
     end
 
-    dQTL = Normal(0, sqrt(h2/nQTL))
-    eQTL = rand(dQTL, nQTL)
-    bv = gt * eQTL
-    y = rand(Normal(0, sqrt(1-h2)), nID) + bv
+    for _ in 1:3                # repeat 3 times to reach μ=0., var=h2*Vp
+        fv(f) = begin
+            tmp = eQTL .* f
+            var(M'tmp) - h2*Vp
+        end
+        eQTL .*= fzero(fv, 1.0)
+        
+        fm(m) = begin
+            tmp = eQTL .- m
+            mean(M'tmp)
+        end
+        eQTL .-= fzero(fm, 0.)
+    end
+    allele, eQTL
+end
+
+"""
+    simu_q_bvy(ped, sde, allele, eQTL)
+---
+1. Drop `allele` throw founders into `ped`.
+2. Calculate `bv`
+3. Add noise to `bv` → `y`
+4. Return `bv`, `y`
+"""
+function simu_q_bvy(ped, sde, allele, eQTL)
+    nFdr = size(allele)[1] ÷ 2
+    nQTL = length(eQTL)
+    nID  = size(ped)[1]
+    y = randn(nID) .* sde
+
+    for id in nFdr+1:nID        # check pedigree
+        if ped[id, 1] == 0 || ped[id, 2] == 0
+            throw(DomainError("ID $id's parent(s) unknown"))
+        end
+    end
+    
+    mat = zeros(Bool, 2nID, nQTL)
+    mat[1:2nFdr, :] = allele
+    
+    bv = begin
+        # Drop alleles
+        @inbounds for id in nFdr+1:nID
+            pa, ma = ped[id, :]
+            ix = CartesianIndex.(2pa .- rand(0:1, nQTL), 1:nQTL)
+            mat[2id-1, :] = mat[ix]
+            ix = CartesianIndex.(2ma .- rand(0:1, nQTL), 1:nQTL)
+            mat[2id, :] = mat[ix]
+        end
+        M = begin
+            tmp = Float64[]
+            for i in 1:2:2nID
+                append!(tmp, convert.(Float64, mat[i, :] + mat[i+1, :]))
+            end
+            reshape(tmp, nQTL, :)
+        end
+        M'eQTL
+    end
+    y += bv
     bv, y
-    #=
-    # sample QTL genotypes in generation 0
-    qg = begin
-        tmp = Bool[]            # only one byte each element
-        for i in 1:nQTL
-            append!(tmp, rand(Bernoulli(freq[i]), 2nid))
-        end
-        reshape(tmp, 2nid, :)
-    end
-
-    # sample QTL effects
-    gt = begin              # convert allele types to 012 genotypes
-        tmp = Float64[]
-        for i in 1:2:2nid
-            append!(tmp, convert.(Float64, qg[i, :] .+ qg[i+1, :]))
-        end
-        reshape(tmp, nid, :)
-    end
-    step = .1/nQTL
-    eqtl = randn(nQTL)
-    mu, vbv = begin
-        m = Float64[]
-        tmp = Float64[]
-        for f in step:step:0.1
-            e = eqtl .* f
-            bv = gt * e
-            push!(tmp, var(bv))
-            push!(m, mean(bv))
-        end
-        m, tmp
-    end
-    =#
 end
