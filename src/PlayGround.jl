@@ -5,5 +5,6 @@ include("styled-messages.jl")
 include("Echidna.jl")
 include("Newton-Raphson.jl")
 include("Simulation.jl")
+include("GLM.jl")
 
 end # module

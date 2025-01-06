@@ -44,6 +44,14 @@ function simu_u_ped(nid::Int, ng::Int)
     reshape(ped, 2, :)'
 end
 
+"""
+    simu_c_bvy(ped, h2)
+---
+Simulation with Cholesky decomposition of **A**.
+"""
+function simu_c_bvy(ped, h2)
+    message("Hello, world")
+end
 
 """
     simu_p_bvy(ped, h2; μ = .0, Vp = 1.0)
@@ -141,7 +149,7 @@ function simu_q_bvy(ped, sde, allele, eQTL)
     nID  = size(ped)[1]
     y = randn(nID) .* sde
 
-    for id in nFdr+1:nID        # check pedigree
+    @inbounds for id in nFdr+1:nID        # check pedigree
         if ped[id, 1] == 0 || ped[id, 2] == 0
             throw(DomainError("ID $id's parent(s) unknown"))
         elseif ped[id, 1] >= id || ped[id, 2] >= id
@@ -163,7 +171,7 @@ function simu_q_bvy(ped, sde, allele, eQTL)
         end
         M = begin
             tmp = Float64[]
-            for i in 1:2:2nID
+            @inbounds for i in 1:2:2nID
                 append!(tmp, convert.(Float64, mat[i, :] + mat[i+1, :]))
             end
             reshape(tmp, nQTL, :)
